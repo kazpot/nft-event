@@ -8,6 +8,7 @@ type Config struct {
 	MongoEvent       string `mapstructure:"MONGO_EVENT_COLLECTION"`
 	MongoNft         string `mapstructure:"MONGO_NFT_COLLECTION"`
 	MongoApprovedNft string `mapstructure:"MONGO_APPROVED_COLLECTION"`
+	MongoBlock       string `mapstructure:"MONGO_BLOCK_COLLECTION"`
 }
 
 func LoadConfig() (*Config, error) {
