@@ -39,13 +39,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// current block
-	header, err := ethClient.HeaderByNumber(context.Background(), nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	log.Infof("current block number: %s\n", header.Number.String())
-
 	mongoClient, ctx, cancel, err := db.Connect(config.MongoUri)
 	if err != nil {
 		log.Fatal(err)
@@ -88,7 +81,7 @@ func main() {
 
 	for _, nft := range nfts {
 		c := gocron.NewScheduler(time.Local)
-		_, _ = c.Every(30).Seconds().Do(func() { handleNftEvent(ethClient, &nft, mongoClient, config, header.Number.Int64(), nftMap) })
+		_, _ = c.Every(30).Seconds().Do(func() { handleNftEvent(ethClient, &nft, mongoClient, config, nftMap) })
 		c.StartAsync()
 	}
 
@@ -97,12 +90,19 @@ func main() {
 	<-quit
 }
 
-func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.Client, config *util.Config, currentBlock int64, nftMap map[common.Address]*contracts.Token) {
+func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.Client, config *util.Config, nftMap map[common.Address]*contracts.Token) {
+	// current block
+	header, err := ethClient.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	currentBlock := header.Number.Int64()
+	log.Infof("current block number: %d\n", currentBlock)
 	log.Infof("nftId: %d", nft.NftId)
 
 	result := model.Block{}
 	collection := client.Database(config.MongoDb).Collection(config.MongoBlock)
-	err := collection.FindOne(context.Background(), bson.D{{"nftId", nft.NftId}}).Decode(&result)
+	err = collection.FindOne(context.Background(), bson.D{{"nftId", nft.NftId}}).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			log.Infof("No blocks for nftId %d", nft.NftId)
@@ -181,7 +181,6 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 
 	// block doc
 	blockDoc := bson.D{
-		{"nftId", nft.Address},
 		{"current", currentBlock},
 		{"updatedAt", time.Now()},
 	}
