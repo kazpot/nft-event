@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -12,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"math/big"
+	"net/http"
 	"nft-event/contracts"
 	"nft-event/db"
 	"nft-event/model"
@@ -81,7 +83,7 @@ func main() {
 
 	for _, nft := range nfts {
 		c := gocron.NewScheduler(time.Local)
-		_, _ = c.Every(30).Seconds().Do(func() { handleNftEvent(ethClient, &nft, mongoClient, config, nftMap) })
+		_, _ = c.Every(300).Seconds().Do(func() { handleNftEvent(ethClient, &nft, mongoClient, config, nftMap) })
 		c.StartAsync()
 	}
 
@@ -145,7 +147,7 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 			to := "0x" + vLog.Topics[2].Hex()[26:]
 			tokenId, err := util.ConvertHexToInt(vLog.Topics[3].Hex())
 			if err != nil {
-				log.Info("failed to convert")
+				log.Error(err)
 			}
 
 			// transfer doc
@@ -165,22 +167,52 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 			if instance, ok := nftMap[common.HexToAddress(nft.Address)]; ok {
 				owner, err := instance.OwnerOf(&bind.CallOpts{}, big.NewInt(tokenId))
 				if err != nil {
-					log.Infof("failed to owner of token: %s, id: %d", nft.Address, tokenId)
+					log.Error(err)
 					break
 				}
+
+				tokenUri, err := instance.TokenURI(&bind.CallOpts{}, big.NewInt(tokenId))
+				if err != nil {
+					log.Error(err)
+					break
+				}
+
+				data, err := util.GetRequest(tokenUri)
+				if err != nil {
+					log.Error(err)
+					break
+				}
+
+				var nftItem model.NftItem
+				if err = json.Unmarshal(data, &nftItem); err != nil {
+					log.Error(err)
+					break
+				}
+
+				imageData, err := util.GetRequest(nftItem.Image)
+				if err != nil {
+					log.Error(err)
+					break
+				}
+				mimeType := http.DetectContentType(imageData)
 
 				// nft doc
 				nftDoc := bson.D{
 					{"nftAddress", nft.Address},
 					{"tokenId", tokenId},
 					{"owner", owner.String()},
+					{"tokenUri", tokenUri},
+					{"name", nftItem.Name},
+					{"description", nftItem.Description},
+					{"image", nftItem.Image},
+					{"mimeType", mimeType},
 					{"createdAt", time.Now()},
 					{"updatedAt", time.Now()},
 				}
 
 				_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nft.Address, "tokenId": tokenId})
 				if err != nil {
-					log.Info(err)
+					log.Error(err)
 				}
 			}
 		}
@@ -194,6 +226,6 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 
 	_, err = db.UpdateOne(client, context.Background(), config.MongoDb, config.MongoBlock, blockDoc, bson.M{"nftId": nft.NftId})
 	if err != nil {
-		log.Info(err)
+		log.Error(err)
 	}
 }
