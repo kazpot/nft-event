@@ -112,6 +112,12 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 	}
 	log.Infof("block %d - %d", result.Current, currentBlock)
 
+	// Update max 200 blocks at one time
+	diff := currentBlock - result.Current
+	if diff > 200 {
+		currentBlock = result.Current + 200
+	}
+
 	query := ethereum.FilterQuery{
 		FromBlock: big.NewInt(result.Current),
 		ToBlock:   big.NewInt(currentBlock),
@@ -168,6 +174,7 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 					{"nftAddress", nft.Address},
 					{"tokenId", tokenId},
 					{"owner", owner.String()},
+					{"createdAt", time.Now()},
 					{"updatedAt", time.Now()},
 				}
 
