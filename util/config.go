@@ -3,6 +3,7 @@ package util
 import "github.com/spf13/viper"
 
 type Config struct {
+	EthUri           string `mapstructure:"ETH_URI"`
 	MongoUri         string `mapstructure:"MONGO_URI"`
 	MongoDb          string `mapstructure:"MONGO_DB"`
 	MongoEvent       string `mapstructure:"MONGO_EVENT_COLLECTION"`

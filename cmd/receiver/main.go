@@ -31,7 +31,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ethClient, err := ethclient.Dial("ws://localhost:8545")
+	ethClient, err := ethclient.Dial(config.EthUri)
 	if err != nil {
 		log.Fatal(err)
 	}

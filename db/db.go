@@ -37,6 +37,21 @@ func InsertOne(client *mongo.Client, ctx context.Context, dataBase, col string, 
 	return result, err
 }
 
+func InsertMany(client *mongo.Client, ctx context.Context, dataBase, col string, doc []interface{}) (*mongo.InsertManyResult, error) {
+	collection := client.Database(dataBase).Collection(col)
+	result, err := collection.InsertMany(ctx, doc)
+	return result, err
+}
+
+func UpdateOne(client *mongo.Client, ctx context.Context, dataBase, col string, doc interface{}, filter interface{}) (*mongo.UpdateResult, error) {
+	update := bson.M{
+		"$set": doc,
+	}
+	collection := client.Database(dataBase).Collection(col)
+	result, err := collection.UpdateOne(ctx, filter, update)
+	return result, err
+}
+
 func UpsertOne(client *mongo.Client, ctx context.Context, dataBase, col string, doc interface{}, filter interface{}) (*mongo.UpdateResult, error) {
 	opts := options.Update().SetUpsert(true)
 	update := bson.M{
