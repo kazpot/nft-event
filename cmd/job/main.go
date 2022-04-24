@@ -49,52 +49,16 @@ func main() {
 	}
 	defer db.Close(mongoClient, ctx, cancel)
 
-	collection := mongoClient.Database(config.MongoDb).Collection(config.MongoApprovedNft)
-	cur, err := collection.Find(context.Background(), bson.D{})
-	defer func(cur *mongo.Cursor, ctx context.Context) {
-		err := cur.Close(ctx)
-		if err != nil {
-			log.Error(err)
-		}
-	}(cur, context.Background())
-
-	var nfts []model.Nft
-	for cur.Next(context.Background()) {
-		result := model.Nft{}
-		err := cur.Decode(&result)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Info("approved nfts")
-		log.Infof("nftId: %d, address: %s", result.NftId, result.Address)
-		nfts = append(nfts, result)
-	}
-	if err := cur.Err(); err != nil {
-		log.Fatal("failed to read collection")
-	}
-
-	nftMap := make(map[common.Address]*contracts.Token, len(nfts))
-	for _, nft := range nfts {
-		instance, err := contracts.NewToken(common.HexToAddress(nft.Address), ethClient)
-		if err != nil {
-			log.Info("failed to create token instance")
-			continue
-		}
-		nftMap[common.HexToAddress(nft.Address)] = instance
-	}
-
-	for _, nft := range nfts {
-		c := gocron.NewScheduler(time.Local)
-		_, _ = c.Every(10).Seconds().Do(func() { handleNftEvent(ethClient, &nft, mongoClient, config, nftMap) })
-		c.StartAsync()
-	}
+	c := gocron.NewScheduler(time.Local)
+	_, _ = c.Every(10).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	c.StartAsync()
 
 	quit := make(chan os.Signal)
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 }
 
-func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.Client, config *util.Config, nftMap map[common.Address]*contracts.Token) {
+func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *util.Config) {
 	// current block
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	if err != nil {
@@ -102,14 +66,13 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 	}
 	currentBlock := header.Number.Int64()
 	log.Infof("current block number: %d\n", currentBlock)
-	log.Infof("nftId: %d", nft.NftId)
 
 	result := model.Block{}
 	collection := client.Database(config.MongoDb).Collection(config.MongoBlock)
-	err = collection.FindOne(context.Background(), bson.D{{"nftId", nft.NftId}}).Decode(&result)
+	err = collection.FindOne(context.Background(), bson.D{{"nftId", 1}}).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			log.Infof("No blocks for nftId %d", nft.NftId)
+			log.Infof("No blocks for nftId %d", 1)
 			return
 		}
 		log.Error(err)
@@ -125,9 +88,6 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 	query := ethereum.FilterQuery{
 		FromBlock: big.NewInt(result.Current),
 		ToBlock:   big.NewInt(currentBlock),
-		Addresses: []common.Address{
-			common.HexToAddress(nft.Address),
-		},
 	}
 
 	logs, err := ethClient.FilterLogs(context.Background(), query)
@@ -138,7 +98,7 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 	var wg sync.WaitGroup
 	for _, vLog := range logs {
 		wg.Add(1)
-		go asyncStore(vLog, client, config, nft, nftMap, &wg)
+		go asyncStore(ethClient, vLog, client, config, &wg)
 
 	}
 	wg.Wait()
@@ -149,14 +109,14 @@ func handleNftEvent(ethClient *ethclient.Client, nft *model.Nft, client *mongo.C
 		{"updatedAt", time.Now()},
 	}
 
-	_, err = db.UpdateOne(client, context.Background(), config.MongoDb, config.MongoBlock, blockDoc, bson.M{"nftId": nft.NftId})
+	_, err = db.UpdateOne(client, context.Background(), config.MongoDb, config.MongoBlock, blockDoc, bson.M{"nftId": 1})
 	if err != nil {
 		log.Error(err)
 	}
 	log.Info("end nft event job")
 }
 
-func asyncStore(vLog types.Log, client *mongo.Client, config *util.Config, nft *model.Nft, nftMap map[common.Address]*contracts.Token, wg *sync.WaitGroup) {
+func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Client, config *util.Config, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// Transfer(from, to, tokenId)
@@ -165,6 +125,14 @@ func asyncStore(vLog types.Log, client *mongo.Client, config *util.Config, nft *
 
 	switch vLog.Topics[0].Hex() {
 	case nftTransferSigHash.Hex():
+		// skip erc20 transfer event which has 3 topics
+		if len(vLog.Topics) != 4 {
+			break
+		}
+
+		nftAddress := vLog.Address.String()
+		instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
+
 		from := "0x" + vLog.Topics[1].Hex()[26:]
 		to := "0x" + vLog.Topics[2].Hex()[26:]
 		tokenId, err := util.ConvertHexToInt(vLog.Topics[3].Hex())
@@ -175,6 +143,7 @@ func asyncStore(vLog types.Log, client *mongo.Client, config *util.Config, nft *
 		// transfer doc
 		transferDoc := bson.D{
 			{"tx", vLog.TxHash.String()},
+			{"nftAddress", nftAddress},
 			{"from", from},
 			{"to", to},
 			{"tokenId", tokenId},
@@ -187,56 +156,54 @@ func asyncStore(vLog types.Log, client *mongo.Client, config *util.Config, nft *
 			log.Error(err)
 		}
 
-		if instance, ok := nftMap[common.HexToAddress(nft.Address)]; ok {
-			owner, err := instance.OwnerOf(&bind.CallOpts{}, big.NewInt(tokenId))
-			if err != nil {
-				log.Error(err)
-				break
-			}
+		owner, err := instance.OwnerOf(&bind.CallOpts{}, big.NewInt(tokenId))
+		if err != nil {
+			log.Error(err)
+			break
+		}
 
-			tokenUri, err := instance.TokenURI(&bind.CallOpts{}, big.NewInt(tokenId))
-			if err != nil {
-				log.Error(err)
-				break
-			}
+		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, big.NewInt(tokenId))
+		if err != nil {
+			log.Error(err)
+			break
+		}
 
-			data, err := util.GetRequest(tokenUri)
-			if err != nil {
-				log.Error(err)
-				break
-			}
+		data, err := util.GetRequest(tokenUri)
+		if err != nil {
+			log.Error(err)
+			break
+		}
 
-			var nftItem model.NftItem
-			if err = json.Unmarshal(data, &nftItem); err != nil {
-				log.Error(err)
-				break
-			}
+		var nftItem model.NftItem
+		if err = json.Unmarshal(data, &nftItem); err != nil {
+			log.Error(err)
+			break
+		}
 
-			imageData, err := util.GetRequest(nftItem.Image)
-			if err != nil {
-				log.Error(err)
-				break
-			}
-			mimeType := http.DetectContentType(imageData)
+		imageData, err := util.GetRequest(nftItem.Image)
+		if err != nil {
+			log.Error(err)
+			break
+		}
+		mimeType := http.DetectContentType(imageData)
 
-			// nft doc
-			nftDoc := bson.D{
-				{"nftAddress", nft.Address},
-				{"tokenId", tokenId},
-				{"owner", owner.String()},
-				{"tokenUri", tokenUri},
-				{"name", nftItem.Name},
-				{"description", nftItem.Description},
-				{"image", nftItem.Image},
-				{"mimeType", mimeType},
-				{"createdAt", time.Now()},
-				{"updatedAt", time.Now()},
-			}
+		// nft doc
+		nftDoc := bson.D{
+			{"nftAddress", nftAddress},
+			{"tokenId", tokenId},
+			{"owner", owner.String()},
+			{"tokenUri", tokenUri},
+			{"name", nftItem.Name},
+			{"description", nftItem.Description},
+			{"image", nftItem.Image},
+			{"mimeType", mimeType},
+			{"createdAt", time.Now()},
+			{"updatedAt", time.Now()},
+		}
 
-			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nft.Address, "tokenId": tokenId})
-			if err != nil {
-				log.Error(err)
-			}
+		_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nftAddress, "tokenId": tokenId})
+		if err != nil {
+			log.Error(err)
 		}
 	}
 }
