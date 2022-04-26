@@ -92,7 +92,7 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 		log.Fatal(err)
 	}
 	currentBlock := header.Number.Int64()
-	log.Infof("current block number: %d\n", currentBlock)
+	log.Infof("current block number: %d", currentBlock)
 
 	result := model.Block{}
 	collection := client.Database(config.MongoDb).Collection(config.MongoBlock)
