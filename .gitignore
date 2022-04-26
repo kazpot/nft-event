@@ -1,4 +1,7 @@
 .env
 .env.rinkeby
+.env.local
 .idea
 .DS_Store
+bin
+app.log

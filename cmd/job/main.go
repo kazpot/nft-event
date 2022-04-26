@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -13,6 +14,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"io"
 	"math/big"
 	"net/http"
 	"nft-event/contracts"
@@ -26,15 +28,40 @@ import (
 )
 
 func main() {
+	config, err := util.LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp: true,
 	})
 	log.SetLevel(log.DebugLevel)
 	log.SetReportCaller(true)
 
-	config, err := util.LoadConfig()
-	if err != nil {
-		log.Fatal(err)
+	if config.LogOutput {
+		var file *os.File
+		logName := config.LogName
+		if _, err := os.Stat(logName); errors.Is(err, os.ErrNotExist) {
+			file, err = os.Create(logName)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			file, err = os.OpenFile(logName, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		log.SetOutput(io.MultiWriter(file, os.Stdout))
+
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+
+			}
+		}(file)
 	}
 
 	log.Info("start nft event job")
@@ -50,7 +77,7 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(10).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	_, _ = c.Every(3).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
 	c.StartAsync()
 
 	quit := make(chan os.Signal)
@@ -77,13 +104,13 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 		}
 		log.Error(err)
 	}
-	log.Infof("block %d - %d", result.Current, currentBlock)
 
 	// Update max 200 blocks at one time
 	diff := currentBlock - result.Current
 	if diff > 200 {
 		currentBlock = result.Current + 200
 	}
+	log.Infof("block %d - %d", result.Current, currentBlock)
 
 	query := ethereum.FilterQuery{
 		FromBlock: big.NewInt(result.Current),
