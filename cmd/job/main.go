@@ -150,13 +150,13 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 	nftTransferSig := []byte("Transfer(address,address,uint256)")
 	nftTransferSigHash := crypto.Keccak256Hash(nftTransferSig)
 
+	// skip erc20 transfer event which has 3 topics
+	if len(vLog.Topics) != 4 {
+		return
+	}
+
 	switch vLog.Topics[0].Hex() {
 	case nftTransferSigHash.Hex():
-		// skip erc20 transfer event which has 3 topics
-		if len(vLog.Topics) != 4 {
-			break
-		}
-
 		nftAddress := vLog.Address.String()
 		instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
 
