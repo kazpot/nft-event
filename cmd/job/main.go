@@ -77,7 +77,7 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(3).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	_, _ = c.Every(60).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
 	c.StartAsync()
 
 	quit := make(chan os.Signal)
@@ -162,34 +162,18 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 		from := "0x" + vLog.Topics[1].Hex()[26:]
 		to := "0x" + vLog.Topics[2].Hex()[26:]
-		tokenId, err := util.ConvertHexToInt(vLog.Topics[3].Hex())
+		tokenId, err := util.ConvertHexToBigInt(vLog.Topics[3].Hex())
 		if err != nil {
 			log.Error(err)
 		}
 
-		// transfer doc
-		transferDoc := bson.D{
-			{"tx", vLog.TxHash.String()},
-			{"nftAddress", nftAddress},
-			{"from", from},
-			{"to", to},
-			{"tokenId", tokenId},
-			{"createdAt", time.Now()},
-		}
-		log.Infof("%v", transferDoc)
-
-		_, err = db.InsertOne(client, context.Background(), config.MongoDb, config.MongoEvent, transferDoc)
+		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
 		if err != nil {
-			log.Error(err)
-		}
-
-		owner, err := instance.OwnerOf(&bind.CallOpts{}, big.NewInt(tokenId))
-		if err != nil {
-			log.Error(err)
+			log.Error(err.Error() + " " + nftAddress)
 			break
 		}
 
-		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, big.NewInt(tokenId))
+		owner, err := instance.OwnerOf(&bind.CallOpts{}, tokenId)
 		if err != nil {
 			log.Error(err)
 			break
@@ -213,6 +197,22 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			break
 		}
 		mimeType := http.DetectContentType(imageData)
+
+		// transfer doc
+		transferDoc := bson.D{
+			{"tx", vLog.TxHash.String()},
+			{"nftAddress", nftAddress},
+			{"from", from},
+			{"to", to},
+			{"tokenId", tokenId},
+			{"createdAt", time.Now()},
+		}
+		log.Infof("%v", transferDoc)
+
+		_, err = db.InsertOne(client, context.Background(), config.MongoDb, config.MongoEvent, transferDoc)
+		if err != nil {
+			log.Error(err)
+		}
 
 		// nft doc
 		nftDoc := bson.D{
