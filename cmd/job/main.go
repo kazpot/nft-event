@@ -23,6 +23,7 @@ import (
 	"nft-event/util"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 )
@@ -188,6 +189,11 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 		var nftItem model.NftItem
 		if err = json.Unmarshal(data, &nftItem); err != nil {
 			log.Error(err)
+			break
+		}
+
+		// TODO: handle uri starting with ipfs://
+		if strings.Contains(nftItem.Image, "ipfs") {
 			break
 		}
 
