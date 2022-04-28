@@ -180,6 +180,11 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			break
 		}
 
+		// TODO: handle uri starting with ipfs://
+		if strings.HasPrefix(tokenUri, "ipfs://") {
+			break
+		}
+
 		data, err := util.GetRequest(tokenUri)
 		if err != nil {
 			log.Error(err)
@@ -193,7 +198,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 		}
 
 		// TODO: handle uri starting with ipfs://
-		if strings.Contains(nftItem.Image, "ipfs") {
+		if strings.HasPrefix(tokenUri, "ipfs://") {
 			break
 		}
 
