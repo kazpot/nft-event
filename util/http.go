@@ -5,10 +5,15 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"time"
 )
 
 func GetRequest(url string) ([]byte, error) {
-	res, err := http.Get(url)
+	client := http.Client{
+		Timeout: 2 * time.Second,
+	}
+
+	res, err := client.Get(url)
 	if err != nil {
 		return nil, err
 	}
