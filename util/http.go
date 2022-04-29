@@ -10,7 +10,7 @@ import (
 
 func GetRequest(url string) ([]byte, error) {
 	client := http.Client{
-		Timeout: 2 * time.Second,
+		Timeout: 5 * time.Second,
 	}
 
 	res, err := client.Get(url)

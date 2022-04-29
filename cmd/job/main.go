@@ -78,8 +78,8 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(180).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
-	c.StartAsync()
+	_, _ = c.Every(1).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	c.SingletonMode().StartBlocking()
 
 	quit := make(chan os.Signal)
 	signal.Notify(quit, os.Interrupt)
@@ -110,8 +110,8 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 
 	// Update max 200 blocks at one time
 	diff := currentBlock - result.Current
-	if diff > 200 {
-		currentBlock = result.Current + 200
+	if diff > 50 {
+		currentBlock = result.Current + 50
 	}
 	log.Infof("block %d - %d", result.Current, currentBlock)
 
@@ -162,6 +162,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 	switch vLog.Topics[0].Hex() {
 	case nftTransferSigHash.Hex():
+		vlogStart := time.Now()
 		nftAddress := vLog.Address.String()
 		instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
 
@@ -172,23 +173,30 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			log.Error(err)
 		}
 
+		tokenUriStart := time.Now()
 		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
 		if err != nil {
 			log.Error(err)
 			break
 		}
+		tokenUriStartDuration := time.Since(tokenUriStart)
+		log.Infof("token uri end, duration: %.2f", tokenUriStartDuration.Seconds())
 
+		ownerOfStart := time.Now()
 		owner, err := instance.OwnerOf(&bind.CallOpts{}, tokenId)
 		if err != nil {
 			log.Error(err)
 			break
 		}
+		ownerOfDuration := time.Since(ownerOfStart)
+		log.Infof("owner of end, duration: %.2f", ownerOfDuration.Seconds())
 
 		// TODO: skip except for http
 		if !strings.HasPrefix(tokenUri, "http") {
 			break
 		}
 
+		httpStart := time.Now()
 		data, err := util.GetRequest(tokenUri)
 		if err != nil {
 			log.Error(err)
@@ -212,6 +220,9 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			break
 		}
 		mimeType := http.DetectContentType(imageData)
+
+		httpDuration := time.Since(httpStart)
+		log.Infof("http end, duration: %.2f", httpDuration.Seconds())
 
 		// transfer doc
 		transferDoc := bson.D{
@@ -247,5 +258,8 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 		if err != nil {
 			log.Error(err)
 		}
+
+		vlogDuration := time.Since(vlogStart)
+		log.Infof("vlog topics end, duration: %.2f", vlogDuration.Seconds())
 	}
 }
