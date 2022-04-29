@@ -28,6 +28,9 @@ import (
 	"time"
 )
 
+// HexBytes ERC721 interface must be compliant with 0x80ac58cd
+var HexBytes = [4]byte{0x80, 0xac, 0x58, 0xcd}
+
 func main() {
 	config, err := util.LoadConfig()
 	if err != nil {
@@ -172,6 +175,13 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 		if err != nil {
 			log.Error(err)
 		}
+
+		isErc721, err := instance.SupportsInterface(&bind.CallOpts{}, HexBytes)
+		if err != nil || !isErc721 {
+			log.Info("no erc721 compliant...")
+			break
+		}
+		log.Infof("compliant with erc721: %v", isErc721)
 
 		tokenUriStart := time.Now()
 		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
