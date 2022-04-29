@@ -78,7 +78,7 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(60).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	_, _ = c.Every(180).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
 	c.StartAsync()
 
 	quit := make(chan os.Signal)
@@ -87,6 +87,8 @@ func main() {
 }
 
 func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *util.Config) {
+	start := time.Now()
+
 	// current block
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	if err != nil {
@@ -141,7 +143,9 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	if err != nil {
 		log.Error(err)
 	}
-	log.Info("end nft event job")
+
+	duration := time.Since(start)
+	log.Infof("end nft event job, duration: %.2f", duration.Seconds())
 }
 
 func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Client, config *util.Config, wg *sync.WaitGroup) {
@@ -170,7 +174,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
 		if err != nil {
-			log.Error(err.Error() + " " + nftAddress)
+			log.Error(err)
 			break
 		}
 
@@ -180,8 +184,8 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			break
 		}
 
-		// TODO: handle uri starting with ipfs://
-		if strings.HasPrefix(tokenUri, "ipfs://") {
+		// TODO: skip except for http
+		if !strings.HasPrefix(tokenUri, "http") {
 			break
 		}
 
@@ -197,8 +201,8 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			break
 		}
 
-		// TODO: handle uri starting with ipfs://
-		if strings.HasPrefix(tokenUri, "ipfs://") {
+		// TODO: skip except for http
+		if !strings.HasPrefix(nftItem.Image, "http") {
 			break
 		}
 
@@ -215,7 +219,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			{"nftAddress", nftAddress},
 			{"from", from},
 			{"to", to},
-			{"tokenId", tokenId},
+			{"tokenId", tokenId.String()},
 			{"createdAt", time.Now()},
 		}
 		log.Infof("%v", transferDoc)
@@ -228,7 +232,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 		// nft doc
 		nftDoc := bson.D{
 			{"nftAddress", nftAddress},
-			{"tokenId", tokenId},
+			{"tokenId", tokenId.String()},
 			{"owner", owner.String()},
 			{"tokenUri", tokenUri},
 			{"name", nftItem.Name},
