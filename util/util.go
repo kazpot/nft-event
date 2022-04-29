@@ -1,6 +1,7 @@
 package util
 
 import (
+	h "encoding/hex"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -18,10 +19,19 @@ func ConvertHexToInt(hex string) (int64, error) {
 
 func ConvertHexToBigInt(hex string) (*big.Int, error) {
 	i := new(big.Int)
-	h := strings.Replace(hex, "0x", "", -1)
-	n, ok := i.SetString(h, 16)
+	hex = strings.Replace(hex, "0x", "", -1)
+	n, ok := i.SetString(hex, 16)
 	if !ok {
 		return nil, fmt.Errorf("failed to convert hex to big int")
 	}
 	return n, nil
+}
+
+func ConvertHexToByte(hex string) ([]byte, error) {
+	hex = strings.Replace(hex, "0x", "", -1)
+	bytes, err := h.DecodeString(hex)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, err
 }
