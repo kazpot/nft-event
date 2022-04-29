@@ -128,11 +128,12 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 		log.Error(err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	var wg sync.WaitGroup
 	for _, vLog := range logs {
 		wg.Add(1)
-		go asyncStore(ethClient, vLog, client, config, &wg)
-
+		go asyncStore(ethClient, vLog, client, config, &wg, ctx)
 	}
 	wg.Wait()
 
@@ -151,125 +152,142 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	log.Infof("end nft event job, duration: %.2f", duration.Seconds())
 }
 
-func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Client, config *util.Config, wg *sync.WaitGroup) {
+func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Client, config *util.Config, wg *sync.WaitGroup, ctx context.Context) {
 	defer wg.Done()
 
-	// Transfer(from, to, tokenId)
-	nftTransferSig := []byte("Transfer(address,address,uint256)")
-	nftTransferSigHash := crypto.Keccak256Hash(nftTransferSig)
+	ch := make(chan string)
+	go func() {
+		// Transfer(from, to, tokenId)
+		nftTransferSig := []byte("Transfer(address,address,uint256)")
+		nftTransferSigHash := crypto.Keccak256Hash(nftTransferSig)
 
-	// skip erc20 transfer event which has 3 topics
-	if len(vLog.Topics) != 4 {
+		// skip erc20 transfer event which has 3 topics
+		if len(vLog.Topics) != 4 {
+			return
+		}
+
+		switch vLog.Topics[0].Hex() {
+		case nftTransferSigHash.Hex():
+			vlogStart := time.Now()
+			nftAddress := vLog.Address.String()
+			instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
+
+			from := "0x" + vLog.Topics[1].Hex()[26:]
+			to := "0x" + vLog.Topics[2].Hex()[26:]
+			tokenId, err := util.ConvertHexToBigInt(vLog.Topics[3].Hex())
+			if err != nil {
+				log.Error(err)
+			}
+
+			isErc721, err := instance.SupportsInterface(&bind.CallOpts{}, HexBytes)
+			if err != nil || !isErc721 {
+				log.Info("no erc721 compliant...")
+				break
+			}
+
+			tokenUriStart := time.Now()
+			tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
+			if err != nil {
+				log.Error(err)
+				break
+			}
+			tokenUriStartDuration := time.Since(tokenUriStart)
+			log.Infof("token uri end, duration: %.2f", tokenUriStartDuration.Seconds())
+
+			ownerOfStart := time.Now()
+			owner, err := instance.OwnerOf(&bind.CallOpts{}, tokenId)
+			if err != nil {
+				log.Error(err)
+				break
+			}
+			ownerOfDuration := time.Since(ownerOfStart)
+			log.Infof("owner of end, duration: %.2f", ownerOfDuration.Seconds())
+
+			// TODO: skip except for http
+			if !strings.HasPrefix(tokenUri, "http") {
+				break
+			}
+
+			httpStart := time.Now()
+			data, err := util.GetRequest(tokenUri)
+			if err != nil {
+				log.Error(err)
+				break
+			}
+
+			var nftItem model.NftItem
+			if err = json.Unmarshal(data, &nftItem); err != nil {
+				log.Error(err)
+				break
+			}
+
+			// TODO: skip except for http
+			if !strings.HasPrefix(nftItem.Image, "http") {
+				break
+			}
+
+			imageData, err := util.GetRequest(nftItem.Image)
+			if err != nil {
+				log.Error(err)
+				break
+			}
+			mimeType := http.DetectContentType(imageData)
+
+			httpDuration := time.Since(httpStart)
+			log.Infof("http end, duration: %.2f", httpDuration.Seconds())
+
+			// transfer doc
+			transferDoc := bson.D{
+				{"tx", vLog.TxHash.String()},
+				{"nftAddress", nftAddress},
+				{"from", from},
+				{"to", to},
+				{"tokenId", tokenId.String()},
+				{"createdAt", time.Now()},
+			}
+			log.Infof("%v", transferDoc)
+
+			_, err = db.InsertOne(client, context.Background(), config.MongoDb, config.MongoEvent, transferDoc)
+			if err != nil {
+				log.Error(err)
+			}
+
+			// nft doc
+			nftDoc := bson.D{
+				{"nftAddress", nftAddress},
+				{"tokenId", tokenId.String()},
+				{"owner", owner.String()},
+				{"tokenUri", tokenUri},
+				{"name", nftItem.Name},
+				{"description", nftItem.Description},
+				{"image", nftItem.Image},
+				{"mimeType", mimeType},
+				{"createdAt", time.Now()},
+				{"updatedAt", time.Now()},
+			}
+
+			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nftAddress, "tokenId": tokenId})
+			if err != nil {
+				log.Error(err)
+			}
+
+			vlogDuration := time.Since(vlogStart)
+			log.Infof("vlog topics end, duration: %.2f", vlogDuration.Seconds())
+		}
+
+		select {
+		case ch <- "done":
+		default:
+			return
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// this is called when context is cancelled
+		log.Info("asyncStore timeout")
 		return
-	}
-
-	switch vLog.Topics[0].Hex() {
-	case nftTransferSigHash.Hex():
-		vlogStart := time.Now()
-		nftAddress := vLog.Address.String()
-		instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
-
-		from := "0x" + vLog.Topics[1].Hex()[26:]
-		to := "0x" + vLog.Topics[2].Hex()[26:]
-		tokenId, err := util.ConvertHexToBigInt(vLog.Topics[3].Hex())
-		if err != nil {
-			log.Error(err)
-		}
-
-		isErc721, err := instance.SupportsInterface(&bind.CallOpts{}, HexBytes)
-		if err != nil || !isErc721 {
-			log.Info("no erc721 compliant...")
-			break
-		}
-		log.Infof("compliant with erc721: %v", isErc721)
-
-		tokenUriStart := time.Now()
-		tokenUri, err := instance.TokenURI(&bind.CallOpts{}, tokenId)
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		tokenUriStartDuration := time.Since(tokenUriStart)
-		log.Infof("token uri end, duration: %.2f", tokenUriStartDuration.Seconds())
-
-		ownerOfStart := time.Now()
-		owner, err := instance.OwnerOf(&bind.CallOpts{}, tokenId)
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		ownerOfDuration := time.Since(ownerOfStart)
-		log.Infof("owner of end, duration: %.2f", ownerOfDuration.Seconds())
-
-		// TODO: skip except for http
-		if !strings.HasPrefix(tokenUri, "http") {
-			break
-		}
-
-		httpStart := time.Now()
-		data, err := util.GetRequest(tokenUri)
-		if err != nil {
-			log.Error(err)
-			break
-		}
-
-		var nftItem model.NftItem
-		if err = json.Unmarshal(data, &nftItem); err != nil {
-			log.Error(err)
-			break
-		}
-
-		// TODO: skip except for http
-		if !strings.HasPrefix(nftItem.Image, "http") {
-			break
-		}
-
-		imageData, err := util.GetRequest(nftItem.Image)
-		if err != nil {
-			log.Error(err)
-			break
-		}
-		mimeType := http.DetectContentType(imageData)
-
-		httpDuration := time.Since(httpStart)
-		log.Infof("http end, duration: %.2f", httpDuration.Seconds())
-
-		// transfer doc
-		transferDoc := bson.D{
-			{"tx", vLog.TxHash.String()},
-			{"nftAddress", nftAddress},
-			{"from", from},
-			{"to", to},
-			{"tokenId", tokenId.String()},
-			{"createdAt", time.Now()},
-		}
-		log.Infof("%v", transferDoc)
-
-		_, err = db.InsertOne(client, context.Background(), config.MongoDb, config.MongoEvent, transferDoc)
-		if err != nil {
-			log.Error(err)
-		}
-
-		// nft doc
-		nftDoc := bson.D{
-			{"nftAddress", nftAddress},
-			{"tokenId", tokenId.String()},
-			{"owner", owner.String()},
-			{"tokenUri", tokenUri},
-			{"name", nftItem.Name},
-			{"description", nftItem.Description},
-			{"image", nftItem.Image},
-			{"mimeType", mimeType},
-			{"createdAt", time.Now()},
-			{"updatedAt", time.Now()},
-		}
-
-		_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nftAddress, "tokenId": tokenId})
-		if err != nil {
-			log.Error(err)
-		}
-
-		vlogDuration := time.Since(vlogStart)
-		log.Infof("vlog topics end, duration: %.2f", vlogDuration.Seconds())
+	case <-ch:
+		return
 	}
 }
