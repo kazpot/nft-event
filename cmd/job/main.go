@@ -95,7 +95,8 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	// current block
 	header, err := ethClient.HeaderByNumber(context.Background(), nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
+		return
 	}
 	currentBlock := header.Number.Int64()
 	log.Infof("current block number: %d", currentBlock)
