@@ -119,6 +119,10 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	}
 	log.Infof("block %d - %d", result.Current, currentBlock)
 
+	if diff == 0 {
+		return
+	}
+
 	query := ethereum.FilterQuery{
 		FromBlock: big.NewInt(result.Current),
 		ToBlock:   big.NewInt(currentBlock),
@@ -128,6 +132,8 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	if err != nil {
 		log.Error(err)
 	}
+
+	log.Infof("number of event log %d", len(logs))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -158,6 +164,9 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 	ch := make(chan string)
 	go func() {
+		defer close(ch)
+		vlogStart := time.Now()
+
 		// Transfer(from, to, tokenId)
 		nftTransferSig := []byte("Transfer(address,address,uint256)")
 		nftTransferSigHash := crypto.Keccak256Hash(nftTransferSig)
@@ -169,7 +178,6 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 		switch vLog.Topics[0].Hex() {
 		case nftTransferSigHash.Hex():
-			vlogStart := time.Now()
 			nftAddress := vLog.Address.String()
 			instance, err := contracts.NewToken(common.HexToAddress(nftAddress), ethClient)
 
@@ -183,7 +191,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			isErc721, err := instance.SupportsInterface(&bind.CallOpts{}, HexBytes)
 			if err != nil || !isErc721 {
 				log.Info("no erc721 compliant...")
-				break
+				return
 			}
 
 			tokenUriStart := time.Now()
@@ -237,7 +245,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 			httpDuration := time.Since(httpStart)
 			log.Infof("http end, duration: %.2f", httpDuration.Seconds())
 
-			// transfer doc
+			// event doc
 			transferDoc := bson.D{
 				{"tx", vLog.TxHash.String()},
 				{"nftAddress", nftAddress},
@@ -267,17 +275,18 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 				{"updatedAt", time.Now()},
 			}
 
+			log.Infof("nft doc: %v", nftDoc)
+
 			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nftAddress, "tokenId": tokenId})
 			if err != nil {
 				log.Error(err)
 			}
-
-			vlogDuration := time.Since(vlogStart)
-			log.Infof("vlog topics end, duration: %.2f", vlogDuration.Seconds())
 		}
 
 		select {
 		case ch <- "done":
+			vlogDuration := time.Since(vlogStart)
+			log.Infof("vlog topics end, duration: %.5f", vlogDuration.Seconds())
 		default:
 			return
 		}
@@ -285,10 +294,10 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 	select {
 	case <-ctx.Done():
-		// this is called when context is cancelled
 		log.Info("asyncStore timeout")
 		return
 	case <-ch:
+		log.Info("asyncStore finished")
 		return
 	}
 }

@@ -1,30 +1,26 @@
 BIN_OUT = $(shell pwd)/bin
 
-receiver:
-	make local
-	go run cmd/receiver/main.go
+local-env:
+	cp .env.local .env
 
-job:
-	make local
-	go run cmd/job/main.go
+rinkeby-env:
+	cp .env.rinkeby .env
 
 build:
 	env GOOS=linux GOARCH=amd64 go build -o $(BIN_OUT)/nft-event-job cmd/job/main.go
 
-deploy:
-	make rinkeby
+clean:
+	rm -rf $(BIN_OUT)
+
+rinkeby:
+	make rinkeby-env
 	make build
 	scp $(BIN_OUT)/nft-event-job x:/home/xs668689/app
 	scp ./.env x:/home/xs668689/app
 	make clean
 
-clean:
-	rm -rf $(BIN_OUT)
-
 local:
-	cp .env.local .env
+	make local-env
+	go run cmd/job/main.go
 
-rinkeby:
-	cp .env.rinkeby .env
-
-.PHONY: receiver job local rinkeby build deploy clean
+.PHONY: build clean local rinkeby
