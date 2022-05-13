@@ -12,6 +12,7 @@ type Config struct {
 	MongoBlock       string `mapstructure:"MONGO_BLOCK_COLLECTION"`
 	LogOutput        bool   `mapstructure:"LOG_OUTPUT"`
 	LogName          string `mapstructure:"LOG_NAME"`
+	NftAddress       string `mapstructure:"NFT_ADDRESS"`
 }
 
 func LoadConfig() (*Config, error) {

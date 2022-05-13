@@ -30,6 +30,7 @@ import (
 
 // HexBytes ERC721 interface must be compliant with 0x80ac58cd
 var HexBytes = [4]byte{0x80, 0xac, 0x58, 0xcd}
+var BlockRange int64 = 1000
 
 func main() {
 	config, err := util.LoadConfig()
@@ -114,16 +115,18 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 
 	// Update max 200 blocks at one time
 	diff := currentBlock - result.Current
-	if diff > 50 {
-		currentBlock = result.Current + 50
+	if diff > BlockRange {
+		currentBlock = result.Current + BlockRange
 	}
-	log.Infof("block %d - %d", result.Current, currentBlock)
 
 	if diff == 0 {
 		return
+	} else {
+		log.Infof("block %d - %d", result.Current, currentBlock)
 	}
 
 	query := ethereum.FilterQuery{
+		Addresses: []common.Address{common.HexToAddress(config.NftAddress)},
 		FromBlock: big.NewInt(result.Current),
 		ToBlock:   big.NewInt(currentBlock),
 	}
