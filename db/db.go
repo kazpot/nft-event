@@ -54,8 +54,8 @@ func UpdateOne(client *mongo.Client, ctx context.Context, dataBase, col string, 
 
 func UpsertOne(client *mongo.Client, ctx context.Context, dataBase, col string, doc interface{}, filter interface{}) (*mongo.UpdateResult, error) {
 	opts := options.Update().SetUpsert(true)
-	update := bson.M{
-		"$set": doc,
+	update := bson.D{
+		{"$set", doc},
 	}
 	collection := client.Database(dataBase).Collection(col)
 	result, err := collection.UpdateOne(ctx, filter, update, opts)

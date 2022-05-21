@@ -100,7 +100,6 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 		return
 	}
 	currentBlock := header.Number.Int64()
-	log.Infof("current block number: %d", currentBlock)
 
 	result := model.Block{}
 	collection := client.Database(config.MongoDb).Collection(config.MongoBlock)
@@ -122,6 +121,7 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 	if diff == 0 {
 		return
 	} else {
+		log.Infof("current block number: %d", currentBlock)
 		log.Infof("block %d - %d", result.Current, currentBlock)
 	}
 
@@ -280,7 +280,11 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 			log.Infof("nft doc: %v", nftDoc)
 
-			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, bson.M{"nftAddress": nftAddress, "tokenId": tokenId})
+			filter := bson.D{
+				{"nftAddress", nftAddress},
+				{"tokenId", tokenId},
+			}
+			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, filter)
 			if err != nil {
 				log.Error(err)
 			}
