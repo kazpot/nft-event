@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -14,7 +13,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"io"
 	"math/big"
 	"net/http"
 	"nft-event/contracts"
@@ -30,44 +28,27 @@ import (
 
 // HexBytes ERC721 interface must be compliant with 0x80ac58cd
 var HexBytes = [4]byte{0x80, 0xac, 0x58, 0xcd}
-var BlockRange int64 = 1000
+
+const (
+	// BlockRange number of blocks per update
+	BlockRange int64 = 1000
+
+	// Interval job interval in seconds
+	Interval int64 = 10
+)
 
 func main() {
 	config, err := util.LoadConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-	})
-	log.SetLevel(log.DebugLevel)
-	log.SetReportCaller(true)
-
-	if config.LogOutput {
-		var file *os.File
-		logName := config.LogName
-		if _, err := os.Stat(logName); errors.Is(err, os.ErrNotExist) {
-			file, err = os.Create(logName)
-			if err != nil {
-				log.Fatal(err)
-			}
-		} else {
-			file, err = os.OpenFile(logName, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
-			if err != nil {
-				log.Fatal(err)
-			}
+	file := util.NewLog().SetUp(config, log.DebugLevel)
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Error("failed to close file")
 		}
-
-		log.SetOutput(io.MultiWriter(file, os.Stdout))
-
-		defer func(file *os.File) {
-			err := file.Close()
-			if err != nil {
-
-			}
-		}(file)
-	}
+	}(file)
 
 	log.Info("start nft event job")
 	ethClient, err := ethclient.Dial(config.EthUri)
@@ -82,7 +63,7 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(1).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	_, _ = c.Every(Interval).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
 	c.SingletonMode().StartBlocking()
 
 	quit := make(chan os.Signal)
