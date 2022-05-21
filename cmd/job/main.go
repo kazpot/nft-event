@@ -32,9 +32,6 @@ var HexBytes = [4]byte{0x80, 0xac, 0x58, 0xcd}
 const (
 	// BlockRange number of blocks per update
 	BlockRange int64 = 1000
-
-	// Interval job interval in seconds
-	Interval int64 = 10
 )
 
 func main() {
@@ -63,7 +60,7 @@ func main() {
 	defer db.Close(mongoClient, ctx, cancel)
 
 	c := gocron.NewScheduler(time.Local)
-	_, _ = c.Every(Interval).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
+	_, _ = c.Every(10).Seconds().Do(func() { handleNftEvent(ethClient, mongoClient, config) })
 	c.SingletonMode().StartBlocking()
 
 	quit := make(chan os.Signal)
