@@ -116,6 +116,7 @@ func handleNftEvent(ethClient *ethclient.Client, client *mongo.Client, config *u
 
 	log.Infof("number of event log %d", len(logs))
 
+	// time out after 20 seconds
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup
@@ -260,7 +261,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 			filter := bson.D{
 				{"nftAddress", nftAddress},
-				{"tokenId", tokenId},
+				{"tokenId", tokenId.String()},
 			}
 			_, err = db.UpsertOne(client, context.Background(), config.MongoDb, config.MongoNft, nftDoc, filter)
 			if err != nil {
