@@ -31,7 +31,8 @@ var HexBytes = [4]byte{0x80, 0xac, 0x58, 0xcd}
 
 const (
 	// BlockRange number of blocks per update
-	BlockRange int64 = 1000
+	BlockRange  int64 = 1000
+	ZeroAddress       = "0x0000000000000000000000000000000000000000"
 )
 
 func main() {
@@ -165,6 +166,7 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 
 			from := "0x" + vLog.Topics[1].Hex()[26:]
 			to := "0x" + vLog.Topics[2].Hex()[26:]
+
 			tokenId, err := util.ConvertHexToBigInt(vLog.Topics[3].Hex())
 			if err != nil {
 				log.Error(err)
@@ -255,6 +257,11 @@ func asyncStore(ethClient *ethclient.Client, vLog types.Log, client *mongo.Clien
 				{"mimeType", mimeType},
 				{"createdAt", time.Now()},
 				{"updatedAt", time.Now()},
+			}
+
+			if from == ZeroAddress {
+				minter := to
+				nftDoc = append(nftDoc, bson.E{Key: "minter", Value: minter})
 			}
 
 			log.Infof("nft doc: %v", nftDoc)
